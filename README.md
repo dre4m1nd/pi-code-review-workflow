@@ -1,35 +1,66 @@
 # pi-code-review-workflow
 
-pi 用的 AI 代码审查工作流，基于 Claude Code 团队的「一次改动的生命周期」（FIG A）实践。
+一个给 **pi** 用的 AI 代码审查 **scripted workflow**（不是 skill），基于 Claude Code 团队的「一次改动的生命周期」(FIG A)。
 
 ## 是什么
 
-一套给 pi 的代码审查工作流，把「一次改动」拆成四个阶段，每个阶段明确 **AI 做什么、人做什么**：
+`workflows/code-review.js` 是一个 pi workflow 脚本，用 `runs.run` / `runs.all` 编排 subagent，把「一次改动」拆成四个阶段：
 
-1. **提交前**：AI 自证（跑测试/构建/lint，贴输出）+ 自审（找 bug / 简化 diff / 端到端验证）
-2. **审查**：AI 审查（多 agent 找 bug + 投票 + 严重度排序）+ 安全扫描 + **风险分级**（人只在风险处出场）
-3. **合并**：merge queue 兜底
-4. **发布后**：flag + 灰度 + 快速回滚 + 复盘
+1. **PR 前**：AI 自证（跑测试/构建/lint，贴输出）+ 自审（全新上下文审 diff）
+2. **每个 PR**：多角度并行审查（正确性 / 安全性 / 一致性）
+3. **验证投票**：只留真 finding，去噪，按严重度排序，标 `Important` / `Nit` / `Pre-existing`
+4. **风险分级**：决定人要看到什么程度（低 0 人 / 中 1 人 / 高 2 人）
 
-## 核心原则
-
-- 审查不是"找 bug"，是"按风险匹配检查"
-- AI 把 90% 的例行错误挡在前面，人负责"该不该做、风险在哪、出错能不能收住"
-- 不怕 AI 漏，怕的是没有快速下架和修复的机制
+核心原则：**AI 把 90% 的例行错误挡在前面，人只在风险处出场。**
 
 ## 怎么用
 
-把 `SKILL.md` 装到 pi 里：
+在 pi 会话里直接跑（文件路径）：
 
-```bash
-pi skills add dre4m1nd/pi-code-review-workflow
+```js
+subagent({ workflow: "./workflows/code-review.js", args: { target: "src/api" } });
 ```
 
-或者直接看 [SKILL.md](./SKILL.md)。
+`args.target` 可选，默认 "本次改动"。
+
+也可以先验证脚本（不启动子 agent）：
+
+```js
+subagent({ action: "validate", workflow: "./workflows/code-review.js" });
+```
+
+## 工作流长什么样
+
+```
+verify (worker)           ── 跑测试/构建/lint，贴输出
+self-review (reviewer)    ── 全新上下文审 diff
+        │
+        ├─ correctness (reviewer) ─┐
+        ├─ security    (reviewer) ─┼─ 并行
+        └─ consistency (reviewer) ─┘
+                    │
+             verdict (reviewer)  ── 投票去噪 + 排序
+                    │
+              risk (reviewer)    ── 风险分级（0/1/2 人）
+```
+
+## 四个阶段对应 FIG A
+
+| FIG A 阶段 | 这个工作流 |
+| --- | --- |
+| BEFORE THE PULL REQUEST | `verify` + `self-review` |
+| ON EVERY PULL REQUEST | `correctness` / `security` / `consistency` 并行 |
+| ON EVERY PULL REQUEST (risk-based approval) | `verdict` → `risk` |
+| AFTER THE MERGE | 人工观察 + 快速回滚（工作流外） |
 
 ## 人的精力放哪
 
-方向、高风险代码、架构、读证据、对结果负责、观察+回滚。
+- 决定要不要做（方向、品味、范围）
+- 高风险代码（认证、加密、数据迁移、部署配置、CI）
+- 架构（会被复制的代码）
+- 读证据（测试输出、命令结果、finding）
+- 对结果负责
+- 观察 + 快速回滚
 
 ## 参考
 
